@@ -1841,7 +1841,47 @@ def get_race_by_id(race_id):
     return row
 
 
-def get_filtered_today_races(show_closed=False, ai_rating_filter="", official_rating_filter="pickup", base_quality_filter="", show_shadow=False, show_all_race=False):
+
+def is_today_buy_rule_match(row):
+    """今日の本買い条件フィルター用。
+    AI★★★★★ × 公式★5 × base土台○ × 4R以降 × AI6点あり のレースだけ残す。
+    """
+    row = row or {}
+    if normalize_candidate_source(row.get("candidate_source")) == "all_race_ai":
+        return False
+
+    rating = str(row.get("rating") or "").strip()
+    if rating != "★★★★★":
+        return False
+
+    if effective_ai_rating_text(row) != "AI★★★★★":
+        return False
+
+    base_quality = extract_base_quality_display_text(
+        row.get("latest_reason_text", ""),
+        row.get("base_reason_text", ""),
+    )
+    if base_quality != "base土台○":
+        return False
+
+    try:
+        race_no_num = int(row.get("race_no_num") or 0)
+    except Exception:
+        try:
+            race_no_num = normalize_race_no_num(row.get("race_no"))
+        except Exception:
+            race_no_num = 0
+    if race_no_num < 4:
+        return False
+
+    ai_selection = (
+        str(row.get("final_ai_selection") or "").strip()
+        or str(row.get("ai_selection") or "").strip()
+        or str(row.get("base_ai_selection") or "").strip()
+    )
+    return len(selection_items(ai_selection)) >= 6
+
+def get_filtered_today_races(show_closed=False, ai_rating_filter="", official_rating_filter="pickup", base_quality_filter="", show_shadow=False, show_all_race=False, buy_rule_only=False):
     ensure_db_initialized()
 
     official_rating_filter = str(official_rating_filter or "pickup").strip() or "pickup"
@@ -1906,6 +1946,8 @@ def get_filtered_today_races(show_closed=False, ai_rating_filter="", official_ra
         tuple(params),
     )
     rows = cur.fetchall()
+    if buy_rule_only:
+        rows = [r for r in rows if is_today_buy_rule_match(r)]
     cur.close()
     conn.close()
     return rows
@@ -2639,7 +2681,7 @@ def make_csv_response(rows, filename):
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-def render_home(races, summary, message_type="", message_text="", show_closed=False, ai_rating_filter="", official_rating_filter="pickup", base_quality_filter="", show_shadow=False, show_all_race=False):
+def render_home(races, summary, message_type="", message_text="", show_closed=False, ai_rating_filter="", official_rating_filter="pickup", base_quality_filter="", show_shadow=False, show_all_race=False, buy_rule_only=False):
     updated_str = summary["last_imported_at"] if summary["last_imported_at"] else "未更新"
     if message_text:
         message_class = "message-success" if message_type == "success" else "message-error"
@@ -2648,6 +2690,7 @@ def render_home(races, summary, message_type="", message_text="", show_closed=Fa
         message_html = ""
     checked_show_closed = "checked" if show_closed else ""
     checked_show_all_race = "checked" if show_all_race else ""
+    checked_buy_rule_only = "checked" if buy_rule_only else ""
     ai_rating_options_html = render_ai_rating_filter_options(ai_rating_filter)
     official_rating_filter = str(official_rating_filter or "pickup").strip() or "pickup"
     official_rating_options_html = render_official_rating_filter_options(official_rating_filter)
@@ -2656,6 +2699,7 @@ def render_home(races, summary, message_type="", message_text="", show_closed=Fa
     external_line = f'<div class="sub"><strong>公開URL:</strong> <a href="{EXTERNAL_URL}">{EXTERNAL_URL}</a></div>' if EXTERNAL_URL else ''
     filter_status_text = "締切後も表示中" if show_closed else "締切前のみ表示中"
     filter_all_race_text = "全レース検証も表示中" if show_all_race else "全レース検証は非表示"
+    filter_buy_rule_text = "本買い条件だけ表示" if buy_rule_only else "本買い条件フィルターOFF"
     filter_ai_text = ai_rating_filter if ai_rating_filter else "すべて"
     official_label_map = {
         "pickup": "公式★5+★4",
@@ -2684,7 +2728,7 @@ def render_home(races, summary, message_type="", message_text="", show_closed=Fa
       <div class="header hero hero-strong">
         <div class="title">今日の買い候補</div>
         <div class="sub">評価：公式★5+★4 / 券種：3連単 / 締切予定時刻が早い順</div>
-        <div class="sub">現在の絞り込み: {filter_status_text} / {filter_all_race_text} / 公式評価 {filter_official_text} / AI評価 {filter_ai_text} / {filter_base_quality_text}</div>
+        <div class="sub">現在の絞り込み: {filter_status_text} / {filter_all_race_text} / {filter_buy_rule_text} / 公式評価 {filter_official_text} / AI評価 {filter_ai_text} / {filter_base_quality_text}</div>
         {external_line}
         {message_html}
         <div class="daily-rule-panel">
@@ -2710,6 +2754,12 @@ def render_home(races, summary, message_type="", message_text="", show_closed=Fa
               <label class="filter-check">
                 <input type="checkbox" name="show_all_race" value="1" {checked_show_all_race}>
                 全レース検証も表示
+              </label>
+            </div>
+            <div class="filter-item filter-item-wide filter-item-buy-rule">
+              <label class="filter-check filter-check-buy-rule">
+                <input type="checkbox" name="buy_rule_only" value="1" {checked_buy_rule_only}>
+                本買い条件だけ表示
               </label>
             </div>
             <div class="filter-item">
@@ -4465,7 +4515,7 @@ def delete_races_bulk(race_ids):
     return count
 
 
-def get_filtered_today_races(show_closed=False, ai_rating_filter="", official_rating_filter="pickup", base_quality_filter="", show_shadow=False, show_all_race=False):
+def get_filtered_today_races(show_closed=False, ai_rating_filter="", official_rating_filter="pickup", base_quality_filter="", show_shadow=False, show_all_race=False, buy_rule_only=False):
     rows = get_races_by_date(today_text())
     allowed_sources = {"official_all", "official_star", "shadow_ai", "all_race_ai"} if show_all_race else {"official_all", "official_star"}
     filtered = []
@@ -4483,6 +4533,8 @@ def get_filtered_today_races(show_closed=False, ai_rating_filter="", official_ra
         if ai_rating_filter and effective_ai_rating_text(r) != ai_rating_filter:
             continue
         if base_quality_filter and extract_base_quality_display_text(r.get("latest_reason_text", ""), r.get("base_reason_text", "")) != base_quality_filter:
+            continue
+        if buy_rule_only and not is_today_buy_rule_match(r):
             continue
         if not show_closed and not is_not_started(r.get("time")):
             continue
@@ -4684,6 +4736,7 @@ def healthz():
 def index():
     show_closed = request.args.get("show_closed", "").strip() == "1"
     show_all_race = request.args.get("show_all_race", "").strip() == "1"
+    buy_rule_only = request.args.get("buy_rule_only", "").strip() == "1"
     ai_rating_filter = request.args.get("ai_rating", "").strip()
     official_rating_filter = request.args.get("official_rating", "pickup").strip() or "pickup"
     base_quality_filter = request.args.get("base_quality", "").strip()
@@ -4701,6 +4754,7 @@ def index():
         official_rating_filter=official_rating_filter,
         base_quality_filter=base_quality_filter,
         show_all_race=show_all_race,
+        buy_rule_only=buy_rule_only,
     )
     summary = get_summary_by_date(today_text())
     return render_home(
@@ -4713,6 +4767,7 @@ def index():
         official_rating_filter=official_rating_filter,
         base_quality_filter=base_quality_filter,
         show_all_race=show_all_race,
+        buy_rule_only=buy_rule_only,
     )
 
 
