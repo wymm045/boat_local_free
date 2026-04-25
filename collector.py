@@ -1410,18 +1410,18 @@ def build_foot_material(exhibition_info, start_info, weather_info=None, equipmen
             st_spread = worst_st - best_st
 
             if best_st <= 0.10:
-                lane_scores[best_lane] += 0.11
+                lane_scores[best_lane] += 0.18
                 top_lane_reasons.append(f"足:{best_lane}号艇足色良さげ")
             elif best_st <= 0.12:
-                lane_scores[best_lane] += 0.07
+                lane_scores[best_lane] += 0.12
 
             if st_spread >= 0.10:
                 reasons.append("足:ST気配あり")
-                lane_scores[best_lane] += 0.06
-                lane_scores[second_lane] += 0.03
+                lane_scores[best_lane] += 0.10
+                lane_scores[second_lane] += 0.05
                 lane_scores[worst_lane] -= 0.12
             elif st_spread >= 0.06:
-                lane_scores[best_lane] += 0.035
+                lane_scores[best_lane] += 0.06
                 lane_scores[worst_lane] -= 0.06
 
     # 展示順位の直接加点/減点は使わない。
@@ -2587,20 +2587,23 @@ def compute_lane_scores_map(exhibition_info, weather_info=None, foot_material=No
         sorted_times = sorted(float_times, key=lambda x: x[1])
         spread = max(v for _, v in float_times) - min_time
         gap12 = sorted_times[1][1] - sorted_times[0][1]
+        # 展示タイムは小差なら良材料にしない。
+        # 0.03以内の最速/準最速加点は、全体差または1-2番手差がある時だけ使う。
+        display_positive_active = (spread >= 0.08 or gap12 >= 0.04)
 
         for lane, v in float_times:
             diff_from_min = v - min_time
             diff_from_avg = v - avg_time
 
             # 0.05以内はほぼ差なし。0.10以上から頭候補として明確に疑う。
-            if diff_from_min <= 0.00:
+            if display_positive_active and diff_from_min <= 0.00:
                 if lane == 1:
                     lane_scores[lane] += 0.10
                 elif lane in {2, 3, 4}:
                     lane_scores[lane] += 0.07
                 else:
                     lane_scores[lane] += 0.04
-            elif diff_from_min <= 0.03:
+            elif display_positive_active and diff_from_min <= 0.03:
                 if lane == 1:
                     lane_scores[lane] += 0.04
                 elif lane in {2, 3, 4}:
@@ -2616,7 +2619,7 @@ def compute_lane_scores_map(exhibition_info, weather_info=None, foot_material=No
             elif diff_from_min >= 0.06:
                 lane_scores[lane] -= 0.02 if lane == 1 else (0.05 if lane in {2, 3, 4} else 0.07)
 
-            if diff_from_avg <= -0.05:
+            if display_positive_active and diff_from_avg <= -0.05:
                 lane_scores[lane] += 0.03 if lane not in {5, 6} else 0.02
             elif diff_from_avg >= 0.05:
                 lane_scores[lane] -= 0.04 if lane != 1 else 0.02
@@ -2738,7 +2741,7 @@ def calculate_latest_signal_metrics(exhibition_info, foot_material=None):
         signal_strength += 0.10
     elif exp_spread >= 0.10:
         signal_strength += 0.05
-    elif exp_spread >= 0.07:
+    elif exp_spread >= 0.08:
         signal_strength += 0.02
 
     if exp_gap12 >= 0.05:
@@ -2833,6 +2836,8 @@ def analyze_latest(base_ai_score, exhibition_info, weather_info=None, foot_mater
             gap12 = sorted_times[1] - sorted_times[0]
             lane1_time = float_times[0]
             lane1_gap = lane1_time - sorted_times[0]
+            # 小差展示では1号艇の「ほぼ最速」加点も入れない。
+            display_positive_active = (spread >= 0.08 or gap12 >= 0.04)
 
             if spread >= 0.18:
                 score += 0.08 * latest_push
@@ -2847,9 +2852,9 @@ def analyze_latest(base_ai_score, exhibition_info, weather_info=None, foot_mater
             if gap12 >= 0.05:
                 score += 0.02 * latest_push
 
-            if lane1_gap <= 0.03:
+            if display_positive_active and lane1_gap <= 0.03:
                 score += 0.05 * latest_push
-            elif lane1_gap <= 0.05:
+            elif display_positive_active and lane1_gap <= 0.05:
                 score += 0.02 * latest_push
             elif lane1_gap >= 0.14:
                 score -= 0.12 * latest_push
@@ -3423,12 +3428,15 @@ def build_role_score_maps(venue, exhibition_info, weather_info=None, foot_materi
         spread = max(v for _, v in float_times) - min_time
         sorted_times = sorted(float_times, key=lambda x: x[1])
         gap12 = sorted_times[1][1] - sorted_times[0][1]
+        # 展示タイムが小差なら、最速/準最速を買い目生成の良材料にしない。
+        # 遅い艇の減点は従来通り残す。
+        display_positive_active = (spread >= 0.08 or gap12 >= 0.04)
 
         for lane, v in float_times:
             diff_min = v - min_time
             diff_avg = v - avg_time
 
-            if diff_min <= 0.00:
+            if display_positive_active and diff_min <= 0.00:
                 if lane == 1:
                     head_score[lane] += 0.07
                     second_score[lane] += 0.04
@@ -3442,7 +3450,7 @@ def build_role_score_maps(venue, exhibition_info, weather_info=None, foot_materi
                     # 外枠の展示最速は、頭ではなく連絡み評価へ寄せる
                     second_score[lane] += 0.04
                     third_score[lane] += 0.05
-            elif diff_min <= 0.03:
+            elif display_positive_active and diff_min <= 0.03:
                 if lane == 1:
                     head_score[lane] += 0.04
                     second_score[lane] += 0.02
@@ -3489,7 +3497,7 @@ def build_role_score_maps(venue, exhibition_info, weather_info=None, foot_materi
                     head_score[lane] -= 0.08
                     second_score[lane] -= 0.03
 
-            if diff_avg <= -0.04:
+            if display_positive_active and diff_avg <= -0.04:
                 if lane in {5, 6}:
                     second_score[lane] += 0.01
                     third_score[lane] += 0.03
@@ -3527,7 +3535,7 @@ def build_role_score_maps(venue, exhibition_info, weather_info=None, foot_materi
         lane1_time = next((v for lane, v in float_times if lane == 1), None)
         if lane1_time is not None:
             diff1 = lane1_time - min_time
-            if diff1 <= 0.03:
+            if display_positive_active and diff1 <= 0.03:
                 head_score[1] += 0.02
             elif diff1 >= 0.14:
                 head_score[1] -= 0.06
@@ -3539,7 +3547,7 @@ def build_role_score_maps(venue, exhibition_info, weather_info=None, foot_materi
         lane2_time = next((v for lane, v in float_times if lane == 2), None)
         if lane2_time is not None:
             diff2 = lane2_time - min_time
-            if diff2 <= 0.03:
+            if display_positive_active and diff2 <= 0.03:
                 second_score[2] += 0.03
             elif diff2 <= 0.05:
                 second_score[2] += 0.01
